@@ -1,3 +1,3 @@
 [submodule "proto"]
 	path = cAR-proto
-	url = git@github.com:wtzhang23/cAR-proto.git
+	url = git@github.com:vr-cAR/cAR-proto.git

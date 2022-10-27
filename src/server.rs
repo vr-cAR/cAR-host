@@ -10,7 +10,7 @@ use crate::{host::{Host, MediaProvider}, c_ar::control_server::ControlServer, rt
 pub struct ServerArgs {
     addr: SocketAddr,
     #[arg(short, long)]
-    ice: Option<String>,
+    ice: Vec<String>,
     #[command(subcommand)]
     input: VideoInput,
 }
@@ -30,7 +30,7 @@ impl ServerArgs {
 
 async fn start_service<P>(
     addr: SocketAddr,
-    ice: Option<String>,
+    ices: Vec<String>,
     provider: P,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
@@ -40,7 +40,7 @@ where
         urls: vec!["stun:stun.l.google.com:19302".to_owned()],
         ..Default::default()
     });
-    if let Some(ice) = ice {
+    for ice in ices {
         host = host.add_ice_server(RTCIceServer {
             urls: vec![ice],
             ..Default::default()
