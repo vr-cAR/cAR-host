@@ -1,10 +1,14 @@
-use std::{net::SocketAddr, error::Error};
+use std::{error::Error, net::SocketAddr};
 
 use clap::{Args, Subcommand};
 use tonic::transport::Server;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 
-use crate::{host::{Host, MediaProvider}, c_ar::control_server::ControlServer, rtp_media_generator::RtpMediaGenerator};
+use crate::{
+    c_ar::control_server::ControlServer,
+    host::{Host, MediaProvider},
+    rtp_media_generator::RtpMediaGenerator,
+};
 
 #[derive(Args, Debug)]
 pub struct ServerArgs {
@@ -17,7 +21,7 @@ pub struct ServerArgs {
 
 #[derive(Subcommand, Debug)]
 enum VideoInput {
-    RTP(RtpMediaGenerator)
+    RTP(RtpMediaGenerator),
 }
 
 impl ServerArgs {
@@ -34,7 +38,7 @@ async fn start_service<P>(
     provider: P,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
-    P: MediaProvider + Send + Sync + 'static
+    P: MediaProvider + Send + Sync + 'static,
 {
     let mut host = Host::new(provider)?.add_ice_server(RTCIceServer {
         urls: vec!["stun:stun.l.google.com:19302".to_owned()],

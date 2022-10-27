@@ -1,15 +1,21 @@
-use std::{sync::Arc, error::Error, net::SocketAddr};
+use std::{error::Error, net::SocketAddr, sync::Arc};
 
 use clap::Args;
 use log::warn;
 use tokio::net::UdpSocket;
-use webrtc::{track::track_local::{TrackLocal, track_local_static_rtp::TrackLocalStaticRTP, TrackLocalWriter}, rtp_transceiver::rtp_codec::RTCRtpCodecCapability, api::media_engine::MIME_TYPE_VP8};
+use webrtc::{
+    api::media_engine::MIME_TYPE_VP8,
+    rtp_transceiver::rtp_codec::RTCRtpCodecCapability,
+    track::track_local::{
+        track_local_static_rtp::TrackLocalStaticRTP, TrackLocal, TrackLocalWriter,
+    },
+};
 
 use crate::host::{MediaProvider, Routine};
 
 #[derive(Args, Debug)]
 pub struct RtpMediaGenerator {
-    rtp_addr: SocketAddr
+    rtp_addr: SocketAddr,
 }
 
 impl MediaProvider for RtpMediaGenerator {
@@ -44,7 +50,10 @@ impl MediaProvider for RtpMediaGenerator {
             Ok::<(), Box<dyn Error + Send + Sync>>(())
         });
 
-        tracks.push((video_track as Arc<dyn TrackLocal + Send + Sync + 'static>, routine));
+        tracks.push((
+            video_track as Arc<dyn TrackLocal + Send + Sync + 'static>,
+            routine,
+        ));
 
         tracks
     }

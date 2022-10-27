@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match args.endpoint {
         EndpointType::Client(client) => {
             client.run().await?;
-        },
+        }
         EndpointType::Server(server) => {
             server.run().await?;
         }

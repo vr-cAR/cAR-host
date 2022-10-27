@@ -1,6 +1,4 @@
-use std::{
-    error::Error, fmt::Debug, future::Future, pin::Pin, sync::Arc,
-};
+use std::{error::Error, fmt::Debug, future::Future, pin::Pin, sync::Arc};
 
 use log::{debug, error, info, warn};
 use tokio::sync::{
@@ -10,11 +8,7 @@ use tokio::sync::{
 use tokio_stream::{wrappers::ReceiverStream, StreamExt};
 use tonic::{Request, Response, Status, Streaming};
 use webrtc::{
-    api::{
-        interceptor_registry,
-        media_engine::MediaEngine,
-        APIBuilder,
-    },
+    api::{interceptor_registry, media_engine::MediaEngine, APIBuilder},
     ice_transport::{
         ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
         ice_connection_state::RTCIceConnectionState,
@@ -25,8 +19,9 @@ use webrtc::{
         configuration::RTCConfiguration,
         offer_answer_options::RTCOfferOptions,
         peer_connection_state::RTCPeerConnectionState,
+        policy::ice_transport_policy::RTCIceTransportPolicy,
         sdp::{sdp_type::RTCSdpType, session_description::RTCSessionDescription},
-        RTCPeerConnection, policy::ice_transport_policy::RTCIceTransportPolicy,
+        RTCPeerConnection,
     },
     track::track_local::TrackLocal,
 };
@@ -42,26 +37,25 @@ pub trait MediaProvider {
 
 pub struct Host<P>
 where
-    P: MediaProvider
+    P: MediaProvider,
 {
     api: webrtc::api::API,
     config: RTCConfiguration,
     provider: P,
 }
 
-impl<P> Debug for Host<P> 
+impl<P> Debug for Host<P>
 where
-    P: MediaProvider
+    P: MediaProvider,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Host")
-            .finish_non_exhaustive()
+        f.debug_struct("Host").finish_non_exhaustive()
     }
 }
 
 impl<P> Host<P>
 where
-    P: MediaProvider
+    P: MediaProvider,
 {
     pub fn new(provider: P) -> Result<Self, Box<dyn Error>> {
         let mut media_engine = MediaEngine::default();
@@ -95,9 +89,9 @@ where
 }
 
 #[tonic::async_trait]
-impl<P> Control for Host<P> 
+impl<P> Control for Host<P>
 where
-    P: MediaProvider + Send + Sync + 'static
+    P: MediaProvider + Send + Sync + 'static,
 {
     type SendHandshakeStream = ReceiverStream<Result<HandshakeMessage, Status>>;
 
@@ -108,10 +102,14 @@ where
         info!("Received handshake request");
         let input_rx = request.into_inner();
 
-        let peer_connection = self.api.new_peer_connection(self.config.clone()).await.map_err(|err| {
-            error!("Failed to create new peer connection. Error: {}", err);
-            Status::internal("Failed to create new peer connection")
-        })?;
+        let peer_connection = self
+            .api
+            .new_peer_connection(self.config.clone())
+            .await
+            .map_err(|err| {
+                error!("Failed to create new peer connection. Error: {}", err);
+                Status::internal("Failed to create new peer connection")
+            })?;
         let (headset_connection, output_rx) = HeadsetConnection::new(peer_connection);
         info!("Connection creation succeeded");
 
@@ -123,7 +121,11 @@ where
 
         // Register media
         for (track, routine) in self.provider.provide() {
-            let rtp_sender = headset_connection.connection().add_track(track).await.map_err(|_err| Status::internal("Failed to add tracks"))?;
+            let rtp_sender = headset_connection
+                .connection()
+                .add_track(track)
+                .await
+                .map_err(|_err| Status::internal("Failed to add tracks"))?;
 
             // Read incoming RTCP packets
             // Before these packets are returned they are processed by interceptors. For things
@@ -181,7 +183,6 @@ impl HeadsetConnection {
         connection: RTCPeerConnection,
     ) -> (Arc<Self>, Receiver<Result<HandshakeMessage, Status>>) {
         let (tx, rx) = mpsc::channel(Self::QUEUED_MSGS);
-
         (
             Arc::new(Self {
                 connection: Some(connection),
@@ -284,6 +285,16 @@ impl HeadsetConnection {
                         .set_remote_description(remote_description)
                         .await?;
                     info!("Connection established");
+
+                    let mut guard = self.cached_ice_candidates.lock().await;
+                    for candidate in guard.take().unwrap() {
+                        debug!("Adding ice candidate {}", candidate.candidate);
+                        self.connection
+                            .as_ref()
+                            .unwrap()
+                            .add_ice_candidate(candidate)
+                            .await?;
+                    }
                 }
                 Msg::Ice(ice) => {
                     debug!("Got ice candidate from peer.");
@@ -295,6 +306,7 @@ impl HeadsetConnection {
                         candidates.push(candidate);
                     } else {
                         std::mem::drop(guard);
+                        debug!("Adding ice candidate {}", candidate.candidate);
                         self.connection
                             .as_ref()
                             .unwrap()
@@ -362,6 +374,7 @@ impl HeadsetConnection {
             let mut guard = self.cached_ice_candidates.lock().await;
             if let Some(candidates) = guard.take() {
                 for candidate in candidates {
+                    debug!("Adding ice candidate {}", candidate.candidate);
                     self.connection
                         .as_ref()
                         .unwrap()
