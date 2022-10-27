@@ -1,10 +1,10 @@
 use std::{net::SocketAddr, error::Error};
 
-use clap::Args;
+use clap::{Args, Subcommand};
 use tonic::transport::Server;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 
-use crate::{VideoInput, host::{StreamGenerator, Host}, c_ar::control_server::ControlServer};
+use crate::{host::{Host, MediaProvider}, c_ar::control_server::ControlServer, rtp_media_generator::RtpMediaGenerator};
 
 #[derive(Args, Debug)]
 pub struct ServerArgs {
@@ -15,24 +15,28 @@ pub struct ServerArgs {
     input: VideoInput,
 }
 
+#[derive(Subcommand, Debug)]
+enum VideoInput {
+    RTP(RtpMediaGenerator)
+}
+
 impl ServerArgs {
     pub async fn run(self) -> Result<(), Box<dyn Error>> {
         match self.input {
-            VideoInput::Video(streamer) => start_service(self.addr, self.ice, streamer).await?,
+            VideoInput::RTP(rtp) => start_service(self.addr, self.ice, rtp).await,
         }
-        Ok(())
     }
 }
 
-async fn start_service<S: StreamGenerator + Send + Sync + 'static>(
+async fn start_service<P>(
     addr: SocketAddr,
     ice: Option<String>,
-    gen: S,
+    provider: P,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
-    S::Stream: Send + Sync + 'static,
+    P: MediaProvider + Send + Sync + 'static
 {
-    let mut host = Host::new(gen)?.add_ice_server(RTCIceServer {
+    let mut host = Host::new(provider)?.add_ice_server(RTCIceServer {
         urls: vec!["stun:stun.l.google.com:19302".to_owned()],
         ..Default::default()
     });

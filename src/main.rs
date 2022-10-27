@@ -1,12 +1,11 @@
 mod client;
 mod host;
+mod rtp_media_generator;
 mod server;
-mod video_stream;
 
 use clap::{Parser, Subcommand};
 use client::ClientArgs;
 use server::ServerArgs;
-use video_stream::VideoStreamer;
 
 mod c_ar {
     tonic::include_proto!("c_ar");
@@ -26,11 +25,6 @@ struct HostArgs {
 enum EndpointType {
     Client(ClientArgs),
     Server(ServerArgs),
-}
-
-#[derive(Subcommand, Debug)]
-enum VideoInput {
-    Video(VideoStreamer),
 }
 
 #[tokio::main]

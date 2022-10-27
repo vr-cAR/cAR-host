@@ -1,8 +1,8 @@
 use std::{
-    error::Error, fmt::Debug, future::Future, io::Read, pin::Pin, sync::Arc, time::Duration,
+    error::Error, fmt::Debug, future::Future, pin::Pin, sync::Arc,
 };
 
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, info, warn};
 use tokio::sync::{
     mpsc::{self, Receiver, Sender},
     Mutex,
@@ -12,7 +12,7 @@ use tonic::{Request, Response, Status, Streaming};
 use webrtc::{
     api::{
         interceptor_registry,
-        media_engine::{self, MediaEngine},
+        media_engine::MediaEngine,
         APIBuilder,
     },
     ice_transport::{
@@ -21,7 +21,6 @@ use webrtc::{
         ice_server::RTCIceServer,
     },
     interceptor::registry::Registry,
-    media::{io::ivf_reader::IVFReader, Sample},
     peer_connection::{
         configuration::RTCConfiguration,
         offer_answer_options::RTCOfferOptions,
@@ -29,8 +28,7 @@ use webrtc::{
         sdp::{sdp_type::RTCSdpType, session_description::RTCSessionDescription},
         RTCPeerConnection, policy::ice_transport_policy::RTCIceTransportPolicy,
     },
-    rtp_transceiver::rtp_codec::RTCRtpCodecCapability,
-    track::track_local::{track_local_static_sample::TrackLocalStaticSample, TrackLocal},
+    track::track_local::TrackLocal,
 };
 
 use crate::c_ar::{
@@ -38,37 +36,34 @@ use crate::c_ar::{
     NotifyIce, SdpType,
 };
 
-pub trait StreamGenerator {
-    type Stream: Read;
-    type Err: Error;
-    fn new_stream(&self) -> Result<Self::Stream, Self::Err>;
+pub trait MediaProvider {
+    fn provide(&self) -> Vec<(Arc<dyn TrackLocal + Send + Sync>, Routine)>;
 }
 
-pub struct Host<SG>
+pub struct Host<P>
 where
-    SG: StreamGenerator,
+    P: MediaProvider
 {
     api: webrtc::api::API,
-    ivf_generator: Arc<SG>,
     config: RTCConfiguration,
+    provider: P,
 }
 
-impl<SG> Debug for Host<SG>
+impl<P> Debug for Host<P> 
 where
-    SG: StreamGenerator + Debug,
+    P: MediaProvider
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Host")
-            .field("ivf_generator", &self.ivf_generator)
             .finish_non_exhaustive()
     }
 }
 
-impl<SG> Host<SG>
+impl<P> Host<P>
 where
-    SG: StreamGenerator,
+    P: MediaProvider
 {
-    pub fn new(gen: SG) -> Result<Self, Box<dyn Error>> {
+    pub fn new(provider: P) -> Result<Self, Box<dyn Error>> {
         let mut media_engine = MediaEngine::default();
         media_engine.register_default_codecs()?;
 
@@ -88,8 +83,8 @@ where
         };
         Ok(Self {
             config,
-            ivf_generator: Arc::new(gen),
             api,
+            provider,
         })
     }
 
@@ -100,10 +95,9 @@ where
 }
 
 #[tonic::async_trait]
-impl<SG> Control for Host<SG>
+impl<P> Control for Host<P> 
 where
-    SG: StreamGenerator + Send + Sync + 'static,
-    SG::Stream: Read + Send + Sync + 'static,
+    P: MediaProvider + Send + Sync + 'static
 {
     type SendHandshakeStream = ReceiverStream<Result<HandshakeMessage, Status>>;
 
@@ -115,91 +109,31 @@ where
         let input_rx = request.into_inner();
 
         let peer_connection = self.api.new_peer_connection(self.config.clone()).await.map_err(|err| {
-            Status::internal(format!(
-                "Failed to create new peer connection. Error: {}",
-                err
-            ))
+            error!("Failed to create new peer connection. Error: {}", err);
+            Status::internal("Failed to create new peer connection")
         })?;
         let (headset_connection, output_rx) = HeadsetConnection::new(peer_connection);
         info!("Connection creation succeeded");
 
-        // send ice servers
+        // Handle Ice Candidates
         headset_connection
             .clone()
             .register_on_ice_candidate_handler()
             .await;
 
-        // add video track
-        let video_track = Arc::new(TrackLocalStaticSample::new(
-            RTCRtpCodecCapability {
-                mime_type: media_engine::MIME_TYPE_VP9.to_owned(),
-                ..Default::default()
-            },
-            "front".to_owned(),
-            "webrtc-rs".to_owned(),
-        ));
+        // Register media
+        for (track, routine) in self.provider.provide() {
+            let rtp_sender = headset_connection.connection().add_track(track).await.map_err(|_err| Status::internal("Failed to add tracks"))?;
 
-        let rtp_sender = headset_connection
-            .connection()
-            .add_track(Arc::clone(&video_track) as Arc<dyn TrackLocal + Send + Sync>)
-            .await
-            .map_err(|_err| Status::internal("Failed to create video track"))?;
-        // Read incoming RTCP packets
-        // Before these packets are returned they are processed by interceptors. For things
-        // like NACK this needs to be called.
-        tokio::spawn(async move {
-            let mut rtcp_buf = vec![0u8; 1500];
-            while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
-        });
-
-        let generator = self.ivf_generator.clone();
-        headset_connection
-            .clone()
-            .add_routine(Box::new(move |_headset_connection| {
-                Box::pin(async move {
-                    debug!("Starting video stream");
-
-                    // initiate stream
-                    let stream = generator.new_stream().map_err(|err| {
-                        Status::internal(format!("Failed to create stream. Error: {}", err))
-                    })?;
-                    // Open a IVF file and start reading using our IVFReader
-                    let (mut ivf, header) = IVFReader::new(stream)?;
-
-                    // It is important to use a time.Ticker instead of time.Sleep because
-                    // * avoids accumulating skew, just calling time.Sleep didn't compensate for the time spent parsing the data
-                    // * works around latency issues with Sleep
-                    // Send our video file frame at a time. Pace our sending so we send it at the same speed it should be played back as.
-                    // This isn't required since the video is timestamped, but we will such much higher loss if we send all at once.
-                    let sleep_time = Duration::from_millis(
-                        ((1000 * header.timebase_numerator) / header.timebase_denominator) as u64,
-                    );
-                    let mut ticker = tokio::time::interval(sleep_time);
-                    loop {
-                        let (frame, _header) = match ivf.parse_next_frame() {
-                            Ok(pair) => pair,
-                            Err(err) => {
-                                warn!("Video stream ended. Error: {}", err);
-                                break;
-                            }
-                        };
-
-                        trace!("Sending next frame.");
-
-                        video_track
-                            .write_sample(&Sample {
-                                data: frame.freeze(),
-                                duration: Duration::from_secs(1),
-                                ..Default::default()
-                            })
-                            .await?;
-
-                        let _ = ticker.tick().await;
-                    }
-                    Ok(())
-                })
-            }))
-            .await;
+            // Read incoming RTCP packets
+            // Before these packets are returned they are processed by interceptors. For things
+            // like NACK this needs to be called.
+            tokio::spawn(async move {
+                let mut rtcp_buf = vec![0u8; 1500];
+                while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
+            });
+            headset_connection.clone().add_routine(routine).await;
+        }
 
         // Set the handler for ICE connection state
         // This will notify you when the peer has connected/disconnected
@@ -215,7 +149,7 @@ where
             .register_on_peer_connection_state_change_handler()
             .await;
 
-        // spawn stream listener
+        // Spawn stream listener
         headset_connection
             .clone()
             .spawn_on_input_msg_handler(input_rx)
@@ -223,6 +157,7 @@ where
 
         // create offer
         headset_connection.send_offer().await.map_err(|err| {
+            error!("Failed to send offer. Error: {}", err);
             Status::internal(format!("Could not send offer to peer. Error: {}", err))
         })?;
 
@@ -230,16 +165,12 @@ where
     }
 }
 
-type Routine<T> = Box<
-    dyn FnOnce(T) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn Error + Send + Sync>>> + Send>>
-        + Send
-        + Sync,
->;
+pub type Routine = Pin<Box<dyn Future<Output = Result<(), Box<dyn Error + Send + Sync>>> + Send>>;
 
-struct HeadsetConnection {
+pub struct HeadsetConnection {
     connection: Option<RTCPeerConnection>,
     output_tx: Sender<Result<HandshakeMessage, Status>>,
-    on_start_routines: Mutex<Option<Vec<Routine<Arc<Self>>>>>,
+    on_start_routines: Mutex<Option<Vec<Routine>>>,
     cached_ice_candidates: Mutex<Option<Vec<RTCIceCandidateInit>>>,
 }
 
@@ -409,13 +340,8 @@ impl HeadsetConnection {
             .await;
     }
 
-    fn fire_routine(self: Arc<Self>, routine: Routine<Arc<Self>>) {
-        tokio::spawn(async move {
-            if let Err(err) = routine(self.clone()).await {
-                error!("Routine threw error. Error: {}", err);
-                self.output_tx.send(Err(Status::from_error(err))).await.ok();
-            }
-        });
+    fn fire_routine(self: Arc<Self>, routine: Routine) {
+        tokio::spawn(routine);
     }
 
     async fn on_ice_connection_state_change(
@@ -485,7 +411,7 @@ impl HeadsetConnection {
         Ok(())
     }
 
-    pub async fn add_routine(self: Arc<Self>, routine: Routine<Arc<Self>>) {
+    pub async fn add_routine(self: Arc<Self>, routine: Routine) {
         let mut guard = self.on_start_routines.lock().await;
         if let Some(routines) = guard.as_mut() {
             routines.push(routine);

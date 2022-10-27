@@ -45,7 +45,6 @@ impl ClientArgs {
         let mut stdin = BufReader::new(io::stdin());
         let mut sdp = String::new();
         stdin.read_line(&mut sdp).await?;
-        println!("SDP: {}", sdp);
         let mut notify_description = NotifyDescription::default();
         notify_description.set_sdp_type(SdpType::Answer);
         notify_description.sdp = sdp;
