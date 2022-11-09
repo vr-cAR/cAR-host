@@ -1,14 +1,16 @@
-use std::{error::Error, fmt::Debug, future::Future, pin::Pin, sync::Arc};
+use std::{collections::HashMap, error::Error, fmt::Debug, future::Future, pin::Pin, sync::Arc};
 
 use log::{debug, error, info, warn};
 use tokio::sync::{
     mpsc::{self, Receiver, Sender},
     Mutex,
 };
-use tokio_stream::{wrappers::ReceiverStream, StreamExt};
+use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status, Streaming};
 use webrtc::{
     api::{interceptor_registry, media_engine::MediaEngine, APIBuilder},
+    data_channel::{OnCloseHdlrFn, OnMessageHdlrFn, OnOpenHdlrFn, RTCDataChannel},
+    error::OnErrorHdlrFn,
     ice_transport::{
         ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
         ice_connection_state::RTCIceConnectionState,
@@ -23,16 +25,32 @@ use webrtc::{
         sdp::{sdp_type::RTCSdpType, session_description::RTCSessionDescription},
         RTCPeerConnection,
     },
-    track::track_local::TrackLocal,
 };
 
 use crate::c_ar::{
-    control_server::Control, handshake_message::Msg, HandshakeMessage, NotifyDescription,
-    NotifyIce, SdpType,
+    control_server::Control, handshake_message::Msg, HandshakeMessage, HealthCheckReply,
+    HealthCheckRequest, NotifyDescription, NotifyIce, SdpType,
 };
 
+pub enum MediaType {
+    Routine(Routine),
+    Channel(Arc<RTCDataChannel>),
+    RecvChannel {
+        label: String,
+        params: RecvChannelParams,
+    },
+}
+
 pub trait MediaProvider {
-    fn provide(&self) -> Vec<(Arc<dyn TrackLocal + Send + Sync>, Routine)>;
+    fn provide<R>(
+        &self,
+        _conn: Arc<R>,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<MediaType>, String>> + Send>>
+    where
+        R: AsRef<RTCPeerConnection> + Send + Sync + 'static,
+    {
+        Box::pin(async { Ok(vec![]) })
+    }
 }
 
 pub struct Host<P>
@@ -93,7 +111,14 @@ impl<P> Control for Host<P>
 where
     P: MediaProvider + Send + Sync + 'static,
 {
-    type SendHandshakeStream = ReceiverStream<Result<HandshakeMessage, Status>>;
+    type SendHandshakeStream = HeadsetStream;
+
+    async fn health_check(
+        &self,
+        _request: Request<HealthCheckRequest>,
+    ) -> Result<Response<HealthCheckReply>, Status> {
+        Ok(Response::new(HealthCheckReply {}))
+    }
 
     async fn send_handshake(
         &self,
@@ -119,22 +144,30 @@ where
             .register_on_ice_candidate_handler()
             .await;
 
-        // Register media
-        for (track, routine) in self.provider.provide() {
-            let rtp_sender = headset_connection
-                .connection()
-                .add_track(track)
-                .await
-                .map_err(|_err| Status::internal("Failed to add tracks"))?;
+        // Handle Data Channels
+        headset_connection
+            .clone()
+            .register_on_data_channel_handler()
+            .await;
 
-            // Read incoming RTCP packets
-            // Before these packets are returned they are processed by interceptors. For things
-            // like NACK this needs to be called.
-            tokio::spawn(async move {
-                let mut rtcp_buf = vec![0u8; 1500];
-                while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
-            });
-            headset_connection.clone().add_routine(routine).await;
+        // Register tracks
+        for media in self
+            .provider
+            .provide(headset_connection.clone())
+            .await
+            .map_err(Status::internal)?
+        {
+            match media {
+                MediaType::Routine(routine) => {
+                    headset_connection.clone().add_routine(routine).await
+                }
+                MediaType::Channel(chn) => headset_connection.add_data_channel(chn).await,
+                MediaType::RecvChannel { label, params } => {
+                    headset_connection
+                        .add_recv_data_channel(label, params)
+                        .await
+                }
+            }
         }
 
         // Set the handler for ICE connection state
@@ -162,15 +195,42 @@ where
             error!("Failed to send offer. Error: {}", err);
             Status::internal(format!("Could not send offer to peer. Error: {}", err))
         })?;
-
-        Ok(Response::new(ReceiverStream::new(output_rx)))
+        Ok(Response::new(HeadsetStream(headset_connection, output_rx)))
     }
 }
 
 pub type Routine = Pin<Box<dyn Future<Output = Result<(), Box<dyn Error + Send + Sync>>> + Send>>;
+pub struct RecvChannelParams {
+    pub on_msg: Option<OnMessageHdlrFn>,
+    pub on_open: Option<OnOpenHdlrFn>,
+    pub on_close: Option<OnCloseHdlrFn>,
+    pub on_error: Option<OnErrorHdlrFn>,
+}
+
+impl RecvChannelParams {
+    pub async fn configure_channel(mut self, chn: &RTCDataChannel) {
+        if let Some(on_open) = self.on_open.take() {
+            chn.on_open(on_open).await;
+        }
+
+        if let Some(on_msg) = self.on_msg.take() {
+            chn.on_message(on_msg).await;
+        }
+
+        if let Some(on_close) = self.on_close.take() {
+            chn.on_close(on_close).await;
+        }
+
+        if let Some(on_error) = self.on_error.take() {
+            chn.on_error(on_error).await;
+        }
+    }
+}
 
 pub struct HeadsetConnection {
     connection: Option<RTCPeerConnection>,
+    channels: Mutex<Vec<Arc<RTCDataChannel>>>,
+    recv_channels: Mutex<HashMap<String, RecvChannelParams>>,
     output_tx: Sender<Result<HandshakeMessage, Status>>,
     on_start_routines: Mutex<Option<Vec<Routine>>>,
     cached_ice_candidates: Mutex<Option<Vec<RTCIceCandidateInit>>>,
@@ -186,6 +246,8 @@ impl HeadsetConnection {
         (
             Arc::new(Self {
                 connection: Some(connection),
+                channels: Mutex::new(Vec::new()),
+                recv_channels: Mutex::new(HashMap::new()),
                 output_tx: tx,
                 on_start_routines: Mutex::new(Some(Vec::new())),
                 cached_ice_candidates: Mutex::new(Some(Vec::new())),
@@ -196,6 +258,33 @@ impl HeadsetConnection {
 
     pub fn connection(&self) -> &RTCPeerConnection {
         self.connection.as_ref().unwrap()
+    }
+
+    pub async fn add_data_channel(&self, chn: Arc<RTCDataChannel>) {
+        self.channels.lock().await.push(chn);
+    }
+
+    pub async fn add_recv_data_channel(&self, label: String, params: RecvChannelParams) {
+        self.recv_channels.lock().await.insert(label, params);
+    }
+
+    pub async fn register_on_data_channel_handler(self: Arc<Self>) {
+        let cloned = self.clone();
+        self.connection
+            .as_ref()
+            .unwrap()
+            .on_data_channel(Box::new(move |chn| {
+                let cloned = cloned.clone();
+                Box::pin(async move {
+                    if let Some(params) = cloned.recv_channels.lock().await.remove(chn.label()) {
+                        info!("Got data channel with label {}", chn.label());
+                        params.configure_channel(chn.as_ref()).await;
+                    } else {
+                        warn!("Got data channel with unknown label {}", chn.label());
+                    }
+                })
+            }))
+            .await;
     }
 
     pub async fn register_on_ice_candidate_handler(self: Arc<Self>) {
@@ -476,6 +565,12 @@ impl HeadsetConnection {
     }
 }
 
+impl AsRef<RTCPeerConnection> for HeadsetConnection {
+    fn as_ref(&self) -> &RTCPeerConnection {
+        self.connection()
+    }
+}
+
 impl Drop for HeadsetConnection {
     fn drop(&mut self) {
         let connection = self.connection.take().unwrap();
@@ -484,5 +579,21 @@ impl Drop for HeadsetConnection {
                 error!("Failed to close connection. Error: {}", err);
             }
         });
+    }
+}
+
+pub struct HeadsetStream(
+    Arc<HeadsetConnection>,
+    Receiver<Result<HandshakeMessage, Status>>,
+);
+
+impl tokio_stream::Stream for HeadsetStream {
+    type Item = Result<HandshakeMessage, Status>;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.1.poll_recv(cx)
     }
 }

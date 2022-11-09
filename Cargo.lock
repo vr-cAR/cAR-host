@@ -368,6 +368,7 @@ dependencies = [
  "futures-util",
  "log",
  "prost",
+ "prost-build",
  "serde",
  "serde_json",
  "simple_logger",

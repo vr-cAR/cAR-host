@@ -11,6 +11,10 @@ mod c_ar {
     tonic::include_proto!("c_ar");
 }
 
+pub mod c_ar_controls {
+    include!(concat!(env!("OUT_DIR"), "/c_ar_controls.rs"));
+}
+
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

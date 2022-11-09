@@ -21,13 +21,13 @@ pub struct ServerArgs {
 
 #[derive(Subcommand, Debug)]
 enum VideoInput {
-    RTP(RtpMediaGenerator),
+    Rtp(RtpMediaGenerator),
 }
 
 impl ServerArgs {
     pub async fn run(self) -> Result<(), Box<dyn Error>> {
         match self.input {
-            VideoInput::RTP(rtp) => start_service(self.addr, self.ice, rtp).await,
+            VideoInput::Rtp(rtp) => start_service(self.addr, self.ice, rtp).await,
         }
     }
 }
