@@ -14,20 +14,22 @@ use crate::{
 pub struct ServerArgs {
     addr: SocketAddr,
     #[arg(short, long)]
+    queue_size: usize,
+    #[arg(short, long)]
     ice: Vec<String>,
     #[command(subcommand)]
-    input: VideoInput,
+    input: MediaInput,
 }
 
 #[derive(Subcommand, Debug)]
-enum VideoInput {
+enum MediaInput {
     Rtp(RtpMediaGenerator),
 }
 
 impl ServerArgs {
     pub async fn run(self) -> Result<(), Box<dyn Error>> {
         match self.input {
-            VideoInput::Rtp(rtp) => start_service(self.addr, self.ice, rtp).await,
+            MediaInput::Rtp(rtp) => start_service(self.addr, self.ice, rtp).await,
         }
     }
 }

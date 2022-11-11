@@ -1,8 +1,9 @@
 use std::{error::Error, net::SocketAddr, pin::Pin, sync::Arc};
 
 use clap::Args;
-use log::{debug, info, warn};
+use log::{info, warn, trace};
 use prost::Message;
+use rosrust_msg::std_msgs::Float32MultiArray;
 use std::future::Future;
 use tokio::{net::UdpSocket, sync::mpsc};
 use webrtc::{
@@ -25,6 +26,10 @@ use crate::{
 #[derive(Args, Debug)]
 pub struct RtpMediaGenerator {
     rtp_addr: SocketAddr,
+    ros_node: String,
+    ros_topic: String,
+    #[clap(short, long, default_value_t=5)]
+    queue_size: usize,
 }
 
 async fn spawn_rtp_server(
@@ -74,6 +79,8 @@ async fn spawn_rtp_server(
 
 async fn configure_controls_channel(
     label: &str,
+    ros_topic: String,
+    ros_queue_sz: usize,
     conn: &RTCPeerConnection,
 ) -> Result<Arc<RTCDataChannel>, String> {
     let l = label.to_owned();
@@ -114,6 +121,13 @@ async fn configure_controls_channel(
     }));
 
     tokio::spawn(async move {
+        let publisher = match rosrust::publish(&ros_topic, ros_queue_sz) {
+            Ok(publisher) => Some(publisher),
+            Err(err) => {
+                warn!("Failed to create ROS publisher. Error: {}", err);
+                None
+            } 
+        };
         let mut acc = i64::MIN;
         while let Some(msg) = controls_rx.recv().await {
             if msg.seq_num <= acc {
@@ -121,7 +135,16 @@ async fn configure_controls_channel(
             }
 
             acc = msg.seq_num;
-            debug!("Thumbstick Position: dx={}, dy={}", msg.dx, msg.dy);
+            trace!("Thumbstick Position: dx={}, dy={}", msg.dx, msg.dy);
+            if let Some(publisher) = publisher.as_ref() {
+                let msg = Float32MultiArray {
+                    data: vec![msg.dx as f32, msg.dy as f32],
+                    ..Default::default()
+                };
+                if let Err(err) = publisher.send(msg) {
+                    warn!("Failed to send turn vector to ROS. Error: {}", err);
+                }
+            }
         }
     });
 
@@ -149,6 +172,10 @@ async fn configure_controls_channel(
 }
 
 impl MediaProvider for RtpMediaGenerator {
+    fn init(&mut self) {
+        rosrust::init(&self.ros_node);
+    }
+
     fn provide<R>(
         &self,
         conn: Arc<R>,
@@ -157,6 +184,8 @@ impl MediaProvider for RtpMediaGenerator {
         R: AsRef<RTCPeerConnection> + Send + Sync + 'static,
     {
         let rtp_addr = self.rtp_addr;
+        let ros_topic = self.ros_topic.clone();
+        let queue_size = self.queue_size;
         Box::pin(async move {
             let mut media: Vec<MediaType> = Vec::new();
 
@@ -166,7 +195,7 @@ impl MediaProvider for RtpMediaGenerator {
             ));
             info!("Adding controls channel");
             media.push(MediaType::Channel(
-                configure_controls_channel("controls", conn.as_ref().as_ref()).await?,
+                configure_controls_channel("controls", ros_topic, queue_size, conn.as_ref().as_ref()).await?,
             ));
 
             Ok(media)

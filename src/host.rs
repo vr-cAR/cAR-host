@@ -42,6 +42,8 @@ pub enum MediaType {
 }
 
 pub trait MediaProvider {
+    fn init(&mut self) {}
+
     fn provide<R>(
         &self,
         _conn: Arc<R>,
@@ -75,7 +77,9 @@ impl<P> Host<P>
 where
     P: MediaProvider,
 {
-    pub fn new(provider: P) -> Result<Self, Box<dyn Error>> {
+    pub fn new(mut provider: P) -> Result<Self, Box<dyn Error>> {
+        provider.init();
+        
         let mut media_engine = MediaEngine::default();
         media_engine.register_default_codecs()?;
 
