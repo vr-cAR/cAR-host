@@ -14,8 +14,6 @@ use crate::{
 pub struct ServerArgs {
     addr: SocketAddr,
     #[arg(short, long)]
-    queue_size: usize,
-    #[arg(short, long)]
     ice: Vec<String>,
     #[command(subcommand)]
     input: MediaInput,

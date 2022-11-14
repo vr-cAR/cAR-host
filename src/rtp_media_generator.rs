@@ -7,7 +7,7 @@ use rosrust_msg::std_msgs::Float32MultiArray;
 use std::future::Future;
 use tokio::{net::UdpSocket, sync::mpsc};
 use webrtc::{
-    api::media_engine::MIME_TYPE_VP8,
+    api::media_engine::MIME_TYPE_H264,
     data_channel::{
         data_channel_init::RTCDataChannelInit, OnCloseHdlrFn, OnMessageHdlrFn, OnOpenHdlrFn,
         RTCDataChannel,
@@ -39,7 +39,7 @@ async fn spawn_rtp_server(
 ) -> Result<Routine, String> {
     let video_track = Arc::new(TrackLocalStaticRTP::new(
         RTCRtpCodecCapability {
-            mime_type: MIME_TYPE_VP8.to_owned(),
+            mime_type: MIME_TYPE_H264.to_owned(),
             ..Default::default()
         },
         id.to_owned(),
@@ -136,9 +136,12 @@ async fn configure_controls_channel(
 
             acc = msg.seq_num;
             trace!("Thumbstick Position: dx={}, dy={}", msg.dx, msg.dy);
+            let dir = nalgebra::SVector::from([msg.dx, msg.dy]);
             if let Some(publisher) = publisher.as_ref() {
+                let speed = dir.norm() * if dir[1] < 0f64 { -1f64 } else { 1f64 } ;
+
                 let msg = Float32MultiArray {
-                    data: vec![msg.dx as f32, msg.dy as f32],
+                    data: vec![speed as f32, -dir[0] as f32],
                     ..Default::default()
                 };
                 if let Err(err) = publisher.send(msg) {
