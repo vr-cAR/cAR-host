@@ -1,0 +1,4 @@
+{
+    "rust-analyzer.checkOnSave.features": ["gstreamer"],
+    "rust-analyzer.cargo.features": "all"
+}

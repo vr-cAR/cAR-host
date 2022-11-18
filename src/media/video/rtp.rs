@@ -9,7 +9,7 @@ use webrtc::{
     track::track_local::{track_local_static_rtp::TrackLocalStaticRTP, TrackLocalWriter},
 };
 
-use super::{MediaProvider, MediaType, Routine};
+use crate::media::{Routine, MediaProvider, MediaType};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct RtpMediaProvider {

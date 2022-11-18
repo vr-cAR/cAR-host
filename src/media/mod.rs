@@ -1,3 +1,6 @@
+pub mod controls;
+pub mod video;
+
 use std::{error::Error, future::Future, pin::Pin, sync::Arc};
 
 use webrtc::{
@@ -5,9 +8,6 @@ use webrtc::{
     error::OnErrorHdlrFn,
     peer_connection::RTCPeerConnection,
 };
-
-pub mod controls;
-pub mod rtp;
 
 pub trait MediaProvider {
     fn init(&mut self) {}

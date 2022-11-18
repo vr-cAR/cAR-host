@@ -1,4 +1,4 @@
-#[cfg(ros)]
+#[cfg(feature = "ros")]
 pub mod ros;
 pub mod txt;
 

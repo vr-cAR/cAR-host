@@ -1,5 +1,5 @@
 use std::{future::Future, error::Error, pin::Pin};
-use log::{trace, warn};
+use log::trace;
 
 use crate::{media::controls::ControlsReceiver, c_ar_controls::ThumbstickDirection};
 
@@ -38,7 +38,6 @@ impl ControlsReceiver for TxtControlsReceiver {
             return Box::pin(async move { Ok(()) });
         }
         self.acc = controls.seq_num;
-        warn!("Host not compiled with ROS");
         trace!(
             "Thumbstick Position: dx={}, dy={}",
             controls.dx,

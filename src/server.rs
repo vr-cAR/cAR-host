@@ -1,4 +1,4 @@
-use std::{error::Error, net::SocketAddr, path::PathBuf};
+use std::{error::Error, net::SocketAddr, path::PathBuf, fs::File};
 
 use clap::Args;
 use tonic::transport::Server;
@@ -9,7 +9,7 @@ use crate::{
     host::Host,
     media::{
         controls::{ControlsMediaProvider, txt::TxtControlsReceiverConfig},
-        rtp::RtpMediaProvider,
+        video::{rtp::RtpMediaProvider},
         MediaProvider,
     },
 };
@@ -23,33 +23,40 @@ pub struct ServerArgs {
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct ServerConfig {
+    #[serde(default)]
     addr: Option<SocketAddr>,
+    #[serde(default)]
     ice_servers: Vec<String>,
     media: Vec<MediaInput>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type")]
 enum MediaInput {
-    #[cfg(ros)]
+    #[cfg(feature = "ros")]
     RosControls(crate::media::controls::ros::RosControlsReceiverConfig),
     TxtControls(TxtControlsReceiverConfig),
     Rtp(RtpMediaProvider),
+    #[cfg(feature = "gstreamer")]
+    Gst(crate::media::video::gst::GstMediaProvider),
 }
 
 impl From<MediaInput> for Box<dyn MediaProvider + Send + Sync> {
     fn from(val: MediaInput) -> Self {
         match val {
-            #[cfg(ros)]
+            #[cfg(feature = "ros")]
             MediaInput::RosControls(provider) => Box::new(ControlsMediaProvider::new(provider)),
             MediaInput::TxtControls(provider) => Box::new(ControlsMediaProvider::new(provider)),
             MediaInput::Rtp(provider) => Box::new(provider),
+            #[cfg(feature = "gstreamer")]
+            MediaInput::Gst(provider) => Box::new(provider),
         }
     }
 }
 
 impl ServerArgs {
     pub async fn run(self) -> Result<(), Box<dyn Error>> {
-        let config: ServerConfig = toml::from_str(&std::fs::read_to_string(self.config)?)?;
+        let config: ServerConfig = serde_yaml::from_reader(File::open(self.config)?)?;
         let mut host = Host::new(config.media.into_iter().map(Into::into).collect())?;
 
         for ice in config.ice_servers {
