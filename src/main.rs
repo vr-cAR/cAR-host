@@ -1,6 +1,6 @@
 mod client;
 mod host;
-mod rtp_media_generator;
+mod media;
 mod server;
 
 use clap::{Parser, Subcommand};

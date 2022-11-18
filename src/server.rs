@@ -1,58 +1,69 @@
-use std::{error::Error, net::SocketAddr};
+use std::{error::Error, net::SocketAddr, path::PathBuf};
 
-use clap::{Args, Subcommand};
+use clap::Args;
 use tonic::transport::Server;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 
 use crate::{
     c_ar::control_server::ControlServer,
-    host::{Host, MediaProvider},
-    rtp_media_generator::RtpMediaGenerator,
+    host::Host,
+    media::{
+        controls::{ros::RosControlsReceiverConfig, ControlsMediaProvider},
+        rtp::RtpMediaProvider,
+        MediaProvider,
+    },
 };
 
 #[derive(Args, Debug)]
 pub struct ServerArgs {
+    #[clap(short, long, default_value = "10.0.0.1:1234")]
     addr: SocketAddr,
-    #[arg(short, long)]
-    ice: Vec<String>,
-    #[command(subcommand)]
-    input: MediaInput,
+    config: PathBuf,
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct ServerConfig {
+    addr: Option<SocketAddr>,
+    ice_servers: Vec<String>,
+    media: Vec<MediaInput>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 enum MediaInput {
-    Rtp(RtpMediaGenerator),
+    RosControls(RosControlsReceiverConfig),
+    Rtp(RtpMediaProvider),
 }
 
-impl ServerArgs {
-    pub async fn run(self) -> Result<(), Box<dyn Error>> {
-        match self.input {
-            MediaInput::Rtp(rtp) => start_service(self.addr, self.ice, rtp).await,
+impl From<MediaInput> for Box<dyn MediaProvider + Send + Sync> {
+    fn from(val: MediaInput) -> Self {
+        match val {
+            MediaInput::RosControls(provider) => Box::new(ControlsMediaProvider::new(provider)),
+            MediaInput::Rtp(provider) => Box::new(provider),
         }
     }
 }
 
-async fn start_service<P>(
-    addr: SocketAddr,
-    ices: Vec<String>,
-    provider: P,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    P: MediaProvider + Send + Sync + 'static,
-{
-    let mut host = Host::new(provider)?.add_ice_server(RTCIceServer {
-        urls: vec!["stun:stun.l.google.com:19302".to_owned()],
-        ..Default::default()
-    });
-    for ice in ices {
-        host = host.add_ice_server(RTCIceServer {
-            urls: vec![ice],
-            ..Default::default()
-        });
+impl ServerArgs {
+    pub async fn run(self) -> Result<(), Box<dyn Error>> {
+        let config: ServerConfig = toml::from_str(&std::fs::read_to_string(self.config)?)?;
+        let mut host = Host::new(config.media.into_iter().map(Into::into).collect())?;
+
+        for ice in config.ice_servers {
+            host = host.add_ice_server(RTCIceServer {
+                urls: vec![ice],
+                ..Default::default()
+            });
+        }
+
+        let addr = match config.addr {
+            Some(addr) => addr,
+            None => self.addr,
+        };
+
+        Server::builder()
+            .add_service(ControlServer::new(host))
+            .serve(addr)
+            .await?;
+        Ok(())
     }
-    Server::builder()
-        .add_service(ControlServer::new(host))
-        .serve(addr)
-        .await?;
-    Ok(())
 }

@@ -20,6 +20,7 @@ serde_json = "1.0.87"
 simple_logger = "3.0.0"
 tokio = { version = "1.21.2", features = ["io-util", "macros", "rt-multi-thread"] }
 tokio-stream = "0.1.11"
+toml = "0.5.9"
 tonic = "0.8.2"
 webrtc = "0.5.1"
 

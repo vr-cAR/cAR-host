@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error, fmt::Debug, future::Future, pin::Pin, sync::Arc};
+use std::{collections::HashMap, error::Error, fmt::Debug, pin::Pin, sync::Arc};
 
 use log::{debug, error, info, warn};
 use tokio::sync::{
@@ -9,8 +9,7 @@ use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status, Streaming};
 use webrtc::{
     api::{interceptor_registry, media_engine::MediaEngine, APIBuilder},
-    data_channel::{OnCloseHdlrFn, OnMessageHdlrFn, OnOpenHdlrFn, RTCDataChannel},
-    error::OnErrorHdlrFn,
+    data_channel::RTCDataChannel,
     ice_transport::{
         ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
         ice_connection_state::RTCIceConnectionState,
@@ -27,59 +26,32 @@ use webrtc::{
     },
 };
 
-use crate::c_ar::{
-    control_server::Control, handshake_message::Msg, HandshakeMessage, HealthCheckReply,
-    HealthCheckRequest, NotifyDescription, NotifyIce, SdpType,
+use crate::{
+    c_ar::{
+        control_server::Control, handshake_message::Msg, HandshakeMessage, HealthCheckReply,
+        HealthCheckRequest, NotifyDescription, NotifyIce, SdpType,
+    },
+    media::{MediaProvider, MediaType, RecvChannelParams, Routine},
 };
 
-pub enum MediaType {
-    Routine(Routine),
-    Channel(Arc<RTCDataChannel>),
-    RecvChannel {
-        label: String,
-        params: RecvChannelParams,
-    },
-}
-
-pub trait MediaProvider {
-    fn init(&mut self) {}
-
-    fn provide<R>(
-        &self,
-        _conn: Arc<R>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<MediaType>, String>> + Send>>
-    where
-        R: AsRef<RTCPeerConnection> + Send + Sync + 'static,
-    {
-        Box::pin(async { Ok(vec![]) })
-    }
-}
-
-pub struct Host<P>
-where
-    P: MediaProvider,
-{
+pub struct Host {
     api: webrtc::api::API,
     config: RTCConfiguration,
-    provider: P,
+    providers: Vec<Box<dyn MediaProvider + Send + Sync + 'static>>,
 }
 
-impl<P> Debug for Host<P>
-where
-    P: MediaProvider,
-{
+impl Debug for Host {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Host").finish_non_exhaustive()
     }
 }
 
-impl<P> Host<P>
-where
-    P: MediaProvider,
-{
-    pub fn new(mut provider: P) -> Result<Self, Box<dyn Error>> {
-        provider.init();
-        
+impl Host {
+    pub fn new(
+        mut providers: Vec<Box<dyn MediaProvider + Send + Sync + 'static>>,
+    ) -> Result<Self, Box<dyn Error>> {
+        providers.iter_mut().for_each(|provider| provider.init());
+
         let mut media_engine = MediaEngine::default();
         media_engine.register_default_codecs()?;
 
@@ -100,7 +72,7 @@ where
         Ok(Self {
             config,
             api,
-            provider,
+            providers,
         })
     }
 
@@ -111,10 +83,7 @@ where
 }
 
 #[tonic::async_trait]
-impl<P> Control for Host<P>
-where
-    P: MediaProvider + Send + Sync + 'static,
-{
+impl Control for Host {
     type SendHandshakeStream = HeadsetStream;
 
     async fn health_check(
@@ -155,21 +124,22 @@ where
             .await;
 
         // Register tracks
-        for media in self
-            .provider
-            .provide(headset_connection.clone())
-            .await
-            .map_err(Status::internal)?
-        {
-            match media {
-                MediaType::Routine(routine) => {
-                    headset_connection.clone().add_routine(routine).await
-                }
-                MediaType::Channel(chn) => headset_connection.add_data_channel(chn).await,
-                MediaType::RecvChannel { label, params } => {
-                    headset_connection
-                        .add_recv_data_channel(label, params)
-                        .await
+        for provider in &self.providers {
+            for media in provider
+                .provide(headset_connection.clone())
+                .await
+                .map_err(Status::internal)?
+            {
+                match media {
+                    MediaType::Routine(routine) => {
+                        headset_connection.clone().add_routine(routine).await
+                    }
+                    MediaType::Channel(chn) => headset_connection.add_data_channel(chn).await,
+                    MediaType::RecvChannel { label, params } => {
+                        headset_connection
+                            .add_recv_data_channel(label, params)
+                            .await
+                    }
                 }
             }
         }
@@ -200,34 +170,6 @@ where
             Status::internal(format!("Could not send offer to peer. Error: {}", err))
         })?;
         Ok(Response::new(HeadsetStream(headset_connection, output_rx)))
-    }
-}
-
-pub type Routine = Pin<Box<dyn Future<Output = Result<(), Box<dyn Error + Send + Sync>>> + Send>>;
-pub struct RecvChannelParams {
-    pub on_msg: Option<OnMessageHdlrFn>,
-    pub on_open: Option<OnOpenHdlrFn>,
-    pub on_close: Option<OnCloseHdlrFn>,
-    pub on_error: Option<OnErrorHdlrFn>,
-}
-
-impl RecvChannelParams {
-    pub async fn configure_channel(mut self, chn: &RTCDataChannel) {
-        if let Some(on_open) = self.on_open.take() {
-            chn.on_open(on_open).await;
-        }
-
-        if let Some(on_msg) = self.on_msg.take() {
-            chn.on_message(on_msg).await;
-        }
-
-        if let Some(on_close) = self.on_close.take() {
-            chn.on_close(on_close).await;
-        }
-
-        if let Some(on_error) = self.on_error.take() {
-            chn.on_error(on_error).await;
-        }
     }
 }
 
