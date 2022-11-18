@@ -56,6 +56,7 @@ async fn spawn_rtp_server(
         .build().unwrap();
     let encode = gstreamer::ElementFactory::make("x264enc")
         .property_from_str("tune", "zerolatency")
+        .property_from_str("speed-preset", "ultrafast")
         .build().unwrap();
     let rtp = gstreamer::ElementFactory::make("rtph264pay")
         .build().unwrap();

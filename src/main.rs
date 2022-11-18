@@ -1,11 +1,11 @@
 mod client;
 mod host;
 mod media;
+mod msg_ext;
 mod server;
 
 use clap::{Parser, Subcommand};
-use client::ClientArgs;
-use server::ServerArgs;
+use log::error;
 
 mod c_ar {
     tonic::include_proto!("c_ar");
@@ -27,8 +27,8 @@ struct HostArgs {
 
 #[derive(Subcommand, Debug)]
 enum EndpointType {
-    Client(ClientArgs),
-    Server(ServerArgs),
+    Client(client::ClientArgs),
+    Server(server::ServerArgs),
 }
 
 #[tokio::main]
@@ -41,14 +41,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => simple_logger::init_with_level(log::Level::Trace)?,
     };
 
-    match args.endpoint {
+    if let Err(err) = match args.endpoint {
         EndpointType::Client(client) => {
-            client.run().await?;
+            client.run().await
         }
         EndpointType::Server(server) => {
-            server.run().await?;
+            server.run().await
         }
-    };
+    } {
+        error!("Error: {}", err);
+        return Err(err);
+    }
 
     Ok(())
 }

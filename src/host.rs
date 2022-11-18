@@ -21,7 +21,7 @@ use webrtc::{
         offer_answer_options::RTCOfferOptions,
         peer_connection_state::RTCPeerConnectionState,
         policy::ice_transport_policy::RTCIceTransportPolicy,
-        sdp::{sdp_type::RTCSdpType, session_description::RTCSessionDescription},
+        sdp::session_description::RTCSessionDescription,
         RTCPeerConnection,
     },
 };
@@ -29,7 +29,7 @@ use webrtc::{
 use crate::{
     c_ar::{
         control_server::Control, handshake_message::Msg, HandshakeMessage, HealthCheckReply,
-        HealthCheckRequest, NotifyDescription, NotifyIce, SdpType,
+        HealthCheckRequest, NotifyIce,
     },
     media::{MediaProvider, MediaType, RecvChannelParams, Routine},
 };
@@ -260,9 +260,8 @@ impl HeadsetConnection {
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         if let Some(candidate) = candidate {
             debug!("ICE candidate: {}", candidate.to_string());
-            let json_base64 = base64::encode(serde_json::to_string(&candidate.to_json().await?)?);
             let ice_msg = HandshakeMessage {
-                msg: Some(Msg::Ice(NotifyIce { json_base64 })),
+                msg: Some(Msg::Ice(NotifyIce::from(candidate).await?)),
             };
             self.output_tx.send(Ok(ice_msg)).await?;
         }
@@ -300,15 +299,7 @@ impl HeadsetConnection {
         if let Some(msg) = msg.msg {
             match msg {
                 Msg::Description(description) => {
-                    let mut remote_description = RTCSessionDescription::default();
-                    remote_description.sdp_type = match description.sdp_type() {
-                        SdpType::Offer => RTCSdpType::Offer,
-                        SdpType::Pranswer => RTCSdpType::Pranswer,
-                        SdpType::Answer => RTCSdpType::Answer,
-                        SdpType::Rollback => RTCSdpType::Rollback,
-                        SdpType::Unspecified => RTCSdpType::Unspecified,
-                    };
-                    remote_description.sdp = description.sdp;
+                    let remote_description: RTCSessionDescription = description.into();
                     debug!(
                         "Got description from peer. Description: {}",
                         serde_json::to_string(&remote_description)?
@@ -319,7 +310,7 @@ impl HeadsetConnection {
                         .unwrap()
                         .set_remote_description(remote_description)
                         .await?;
-                    info!("Connection established");
+                    info!("Remote description successfully set");
 
                     let mut guard = self.cached_ice_candidates.lock().await;
                     for candidate in guard.take().unwrap() {
@@ -333,9 +324,7 @@ impl HeadsetConnection {
                 }
                 Msg::Ice(ice) => {
                     debug!("Got ice candidate from peer.");
-                    let candidate = serde_json::from_str::<RTCIceCandidateInit>(
-                        &String::from_utf8(base64::decode(ice.json_base64)?)?,
-                    )?;
+                    let candidate = ice.try_into()?;
                     let mut guard = self.cached_ice_candidates.lock().await;
                     if let Some(candidates) = guard.as_mut() {
                         candidates.push(candidate);
@@ -482,21 +471,8 @@ impl HeadsetConnection {
             .await?;
         let offer_json = serde_json::to_string(&offer)?;
         debug!("Created offer: {}", offer_json);
-
-        // create message from offer
-        let sdp_type = match offer.sdp_type {
-            RTCSdpType::Unspecified => SdpType::Unspecified,
-            RTCSdpType::Offer => SdpType::Offer,
-            RTCSdpType::Pranswer => SdpType::Pranswer,
-            RTCSdpType::Answer => SdpType::Answer,
-            RTCSdpType::Rollback => SdpType::Rollback,
-        };
-        let mut msg = NotifyDescription::default();
-        msg.set_sdp_type(sdp_type);
-        msg.sdp = offer.sdp.clone();
-
         let msg = HandshakeMessage {
-            msg: Some(Msg::Description(msg)),
+            msg: Some(Msg::Description(offer.clone().into())),
         };
 
         // set local description to offer
