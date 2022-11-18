@@ -1,12 +1,10 @@
-use std::{error::Error, future::Future, pin::Pin};
-
+use std::{future::Future, error::Error, pin::Pin};
 use log::{trace, warn};
 use rosrust::Publisher;
 use rosrust_msg::std_msgs::Float32MultiArray;
 
-use crate::c_ar_controls::ThumbstickDirection;
-
-use super::{ControlsReceiver, ControlsReceiverFactory};
+use crate::{media::controls::ControlsReceiver, c_ar_controls::ThumbstickDirection};
+use super::ControlsReceiverFactory;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RosControlsReceiverConfig {

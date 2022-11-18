@@ -8,7 +8,7 @@ use crate::{
     c_ar::control_server::ControlServer,
     host::Host,
     media::{
-        controls::{ros::RosControlsReceiverConfig, ControlsMediaProvider},
+        controls::{ControlsMediaProvider, txt::TxtControlsReceiverConfig},
         rtp::RtpMediaProvider,
         MediaProvider,
     },
@@ -30,14 +30,18 @@ pub struct ServerConfig {
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 enum MediaInput {
-    RosControls(RosControlsReceiverConfig),
+    #[cfg(ros)]
+    RosControls(crate::media::controls::ros::RosControlsReceiverConfig),
+    TxtControls(TxtControlsReceiverConfig),
     Rtp(RtpMediaProvider),
 }
 
 impl From<MediaInput> for Box<dyn MediaProvider + Send + Sync> {
     fn from(val: MediaInput) -> Self {
         match val {
+            #[cfg(ros)]
             MediaInput::RosControls(provider) => Box::new(ControlsMediaProvider::new(provider)),
+            MediaInput::TxtControls(provider) => Box::new(ControlsMediaProvider::new(provider)),
             MediaInput::Rtp(provider) => Box::new(provider),
         }
     }

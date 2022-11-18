@@ -1,4 +1,6 @@
+#[cfg(ros)]
 pub mod ros;
+pub mod txt;
 
 use std::{error::Error, future::Future, pin::Pin, sync::Arc};
 
