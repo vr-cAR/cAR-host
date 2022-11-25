@@ -1,13 +1,12 @@
-use std::{future::Future, error::Error, pin::Pin};
 use log::trace;
+use std::{error::Error, future::Future, pin::Pin};
 
-use crate::{media::controls::ControlsReceiver, c_ar_controls::ThumbstickDirection};
+use crate::{c_ar_controls::ThumbstickDirection, media::controls::ControlsReceiver};
 
 use super::ControlsReceiverFactory;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TxtControlsReceiverConfig;
-
 
 impl ControlsReceiverFactory for TxtControlsReceiverConfig {
     type Receiver = TxtControlsReceiver;
@@ -23,9 +22,7 @@ pub struct TxtControlsReceiver {
 
 impl TxtControlsReceiver {
     pub fn new() -> Self {
-        Self {
-            acc: i64::MIN,
-        }
+        Self { acc: i64::MIN }
     }
 }
 
@@ -43,6 +40,6 @@ impl ControlsReceiver for TxtControlsReceiver {
             controls.dx,
             controls.dy
         );
-        Box::pin(async move { Ok (()) })
+        Box::pin(async move { Ok(()) })
     }
 }

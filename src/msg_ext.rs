@@ -1,8 +1,14 @@
-use std::{error::Error, fmt::{Display, Formatter, self}};
+use std::{
+    error::Error,
+    fmt::{self, Display, Formatter},
+};
 
-use webrtc::{peer_connection::sdp::{sdp_type::RTCSdpType, session_description::RTCSessionDescription}, ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit}};
+use webrtc::{
+    ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
+    peer_connection::sdp::{sdp_type::RTCSdpType, session_description::RTCSessionDescription},
+};
 
-use crate::c_ar::{SdpType, NotifyDescription, NotifyIce};
+use crate::c_ar::{NotifyDescription, NotifyIce, SdpType};
 
 impl From<RTCSdpType> for SdpType {
     fn from(ty: RTCSdpType) -> Self {
@@ -54,10 +60,14 @@ pub enum DeserializationError {
 
 impl Display for DeserializationError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", match self {
-            DeserializationError::Base64Decode => "Base64 decode error",
-            DeserializationError::InvalidFormat => "Formatted incorrectly",
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                DeserializationError::Base64Decode => "Base64 decode error",
+                DeserializationError::InvalidFormat => "Formatted incorrectly",
+            }
+        )
     }
 }
 
@@ -69,9 +79,12 @@ impl TryFrom<NotifyIce> for RTCIceCandidateInit {
     fn try_from(value: NotifyIce) -> Result<Self, Self::Error> {
         serde_json::from_str(
             &String::from_utf8(
-                base64::decode(value.json_base64).map_err(|_| DeserializationError::Base64Decode)?
-            ).map_err(|_| DeserializationError::InvalidFormat)?
-        ).map_err(|_| DeserializationError::InvalidFormat)
+                base64::decode(value.json_base64)
+                    .map_err(|_| DeserializationError::Base64Decode)?,
+            )
+            .map_err(|_| DeserializationError::InvalidFormat)?,
+        )
+        .map_err(|_| DeserializationError::InvalidFormat)
     }
 }
 
@@ -79,7 +92,7 @@ impl NotifyIce {
     pub async fn from(ice: RTCIceCandidate) -> Result<Self, webrtc::Error> {
         let json_base64 = base64::encode(
             serde_json::to_string(&ice.to_json().await?)
-                .expect("serialization of ice to json should not fail")
+                .expect("serialization of ice to json should not fail"),
         );
         Ok(Self { json_base64 })
     }

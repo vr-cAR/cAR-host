@@ -1,10 +1,10 @@
-use std::{future::Future, error::Error, pin::Pin};
 use log::{trace, warn};
 use rosrust::Publisher;
 use rosrust_msg::std_msgs::Float32MultiArray;
+use std::{error::Error, future::Future, pin::Pin};
 
-use crate::{media::controls::ControlsReceiver, c_ar_controls::ThumbstickDirection};
 use super::ControlsReceiverFactory;
+use crate::{c_ar_controls::ThumbstickDirection, media::controls::ControlsReceiver};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RosControlsReceiverConfig {
@@ -60,7 +60,7 @@ impl ControlsReceiver for RosControlsReceiver {
         let dir = nalgebra::SVector::from([controls.dx, controls.dy]);
         if let Some(publisher) = self.publisher.as_ref() {
             Box::pin(async move {
-                let speed = dir.norm() * if dir[1] < 0f64 { -1f64 } else { 1f64 } ;
+                let speed = dir.norm() * if dir[1] < 0f64 { -1f64 } else { 1f64 };
 
                 let msg = Float32MultiArray {
                     data: vec![speed as f32, -dir[0] as f32],
@@ -72,7 +72,7 @@ impl ControlsReceiver for RosControlsReceiver {
                 Ok(())
             })
         } else {
-            Box::pin(async move { Ok (()) })
+            Box::pin(async move { Ok(()) })
         }
     }
 }

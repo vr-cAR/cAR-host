@@ -42,12 +42,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     if let Err(err) = match args.endpoint {
-        EndpointType::Client(client) => {
-            client.run().await
-        }
-        EndpointType::Server(server) => {
-            server.run().await
-        }
+        EndpointType::Client(client) => client.run().await,
+        EndpointType::Server(server) => server.run().await,
     } {
         error!("Error: {}", err);
         return Err(err);

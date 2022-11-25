@@ -1,4 +1,4 @@
-use std::{error::Error, net::SocketAddr, path::PathBuf, fs::File};
+use std::{error::Error, fs::File, net::SocketAddr, path::PathBuf};
 
 use clap::Args;
 use tonic::transport::Server;
@@ -8,8 +8,8 @@ use crate::{
     c_ar::control_server::ControlServer,
     host::Host,
     media::{
-        controls::{ControlsMediaProvider, txt::TxtControlsReceiverConfig},
-        video::{rtp::RtpMediaProvider},
+        controls::{txt::TxtControlsReceiverConfig, ControlsMediaProvider},
+        video::rtp::RtpMediaProvider,
         MediaProvider,
     },
 };

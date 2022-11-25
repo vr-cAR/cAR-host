@@ -17,12 +17,10 @@ use webrtc::{
     },
     interceptor::registry::Registry,
     peer_connection::{
-        configuration::RTCConfiguration,
-        offer_answer_options::RTCOfferOptions,
+        configuration::RTCConfiguration, offer_answer_options::RTCOfferOptions,
         peer_connection_state::RTCPeerConnectionState,
         policy::ice_transport_policy::RTCIceTransportPolicy,
-        sdp::session_description::RTCSessionDescription,
-        RTCPeerConnection,
+        sdp::session_description::RTCSessionDescription, RTCPeerConnection,
     },
 };
 

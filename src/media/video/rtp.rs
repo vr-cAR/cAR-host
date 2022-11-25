@@ -3,13 +3,13 @@ use std::{error::Error, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
 use log::{info, warn};
 use tokio::net::UdpSocket;
 use webrtc::{
-    api::media_engine::MIME_TYPE_H264,
+    api::media_engine,
     peer_connection::RTCPeerConnection,
     rtp_transceiver::rtp_codec::RTCRtpCodecCapability,
     track::track_local::{track_local_static_rtp::TrackLocalStaticRTP, TrackLocalWriter},
 };
 
-use crate::media::{Routine, MediaProvider, MediaType};
+use crate::media::{MediaProvider, MediaType, Routine};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct RtpMediaProvider {
@@ -23,7 +23,7 @@ async fn spawn_rtp_server(
 ) -> Result<Routine, String> {
     let video_track = Arc::new(TrackLocalStaticRTP::new(
         RTCRtpCodecCapability {
-            mime_type: MIME_TYPE_H264.to_owned(),
+            mime_type: media_engine::MIME_TYPE_H264.to_owned(),
             ..Default::default()
         },
         id.to_owned(),
