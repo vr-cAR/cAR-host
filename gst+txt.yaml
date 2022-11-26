@@ -1,4 +1,18 @@
 addr: 0.0.0.0:1234
 media:
     - type: Gst
+      mime_type: video/VP8
+      elements:
+        - name: autovideosrc
+        - name: aspectratiocrop
+          properties:
+            aspect-ratio: 1/1
+        - name: videoconvert
+        - name: vp8enc
+          properties:
+            threads: 4
+            deadline: 2
+        - name: rtpvp8pay
+          properties:
+            auto-header-extension: false
     - type: TxtControls
