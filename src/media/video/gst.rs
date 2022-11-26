@@ -61,6 +61,8 @@ impl GstMediaProvider {
             .await
             .map_err(|_err| "Failed to add tracks")?;
 
+        let video_track = Arc::downgrade(&video_track);
+
         // Read incoming RTCP packets
         // Before these packets are returned they are processed by interceptors. For things
         // like NACK this needs to be called.
@@ -162,21 +164,28 @@ impl GstMediaProvider {
 
             info!("Sending RTP packets");
             pipeline.set_state(gstreamer::State::Playing)?;
-            while let Some(buffer) = buffer_rx.recv().await {
-                if let Err(err) = video_track.write(buffer.as_slice()).await {
-                    warn!("Failed to write rtp packet. Error: {}", err);
-                    if webrtc::Error::ErrClosedPipe == err {
-                        return Ok(());
-                    } else {
-                        Err(err)?;
+            let output = 'rtp_loop: {
+                while let Some(buffer) = buffer_rx.recv().await {
+                    let Some(video_track) = video_track.upgrade() else {
+                        info!("Video track no longer exists");
+                        break;
+                    };
+                    if let Err(err) = video_track.write(buffer.as_slice()).await {
+                        warn!("Failed to write rtp packet. Error: {}", err);
+                        if webrtc::Error::ErrClosedPipe == err {
+                            info!("WebRTC pipe closed");
+                            break;
+                        } else {
+                            break 'rtp_loop Err(Box::new(err).into());
+                        }
                     }
-                    unreachable!();
+                    trace!("Sent RTP packet of size: {}", buffer.as_slice().len());
                 }
-                trace!("Sent RTP packet of size: {}", buffer.as_slice().len());
-            }
-
+                Ok::<(), Box<dyn Error + Send + Sync>>(())
+            };
+            info!("Shutting down gstreamer pipeline");
             pipeline.set_state(gstreamer::State::Null)?;
-            Ok::<(), Box<dyn Error + Send + Sync>>(())
+            output
         });
         Ok(routine)
     }
@@ -190,18 +199,16 @@ impl MediaProvider for GstMediaProvider {
         }
     }
 
-    fn provide(
-        &self,
-        conn: Arc<dyn AsRef<RTCPeerConnection> + Send + Sync>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<MediaType>, String>> + Send>> {
+    fn provide<'a>(
+        &'a self,
+        conn: &'a (dyn AsRef<RTCPeerConnection> + Send + Sync),
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<MediaType>, String>> + Send + 'a>> {
         let self_cloned = self.clone();
         Box::pin(async move {
             let mut media: Vec<MediaType> = Vec::new();
             info!("Adding front camera feed");
             media.push(MediaType::Routine(
-                self_cloned
-                    .spawn_rtp_server("front", (*conn).as_ref())
-                    .await?,
+                self_cloned.spawn_rtp_server("front", conn.as_ref()).await?,
             ));
             Ok(media)
         })

@@ -133,16 +133,16 @@ where
 {
     fn init(&mut self) {}
 
-    fn provide(
-        &self,
-        conn: Arc<dyn AsRef<RTCPeerConnection> + Send + Sync>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<MediaType>, String>> + Send + '_>> {
+    fn provide<'a>(
+        &'a self,
+        conn: &'a (dyn AsRef<RTCPeerConnection> + Send + Sync),
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<MediaType>, String>> + Send + 'a>> {
         Box::pin(async move {
             let mut media: Vec<MediaType> = Vec::new();
 
             info!("Adding controls channel");
             media.push(MediaType::Channel(
-                self.configure_controls_channel("controls", (*conn).as_ref())
+                self.configure_controls_channel("controls", conn.as_ref())
                     .await?,
             ));
 

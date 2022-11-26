@@ -62,16 +62,16 @@ async fn spawn_rtp_server(
 }
 
 impl MediaProvider for RtpMediaProvider {
-    fn provide(
-        &self,
-        conn: Arc<dyn AsRef<RTCPeerConnection> + Send + Sync>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<MediaType>, String>> + Send>> {
+    fn provide<'a>(
+        &'a self,
+        conn: &'a (dyn AsRef<RTCPeerConnection> + Send + Sync),
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<MediaType>, String>> + Send + 'a>> {
         let rtp_addr = self.rtp_addr;
         Box::pin(async move {
             let mut media: Vec<MediaType> = Vec::new();
             info!("Adding front camera feed");
             media.push(MediaType::Routine(
-                spawn_rtp_server("front", (*conn).as_ref(), rtp_addr).await?,
+                spawn_rtp_server("front", conn.as_ref(), rtp_addr).await?,
             ));
 
             Ok(media)

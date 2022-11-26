@@ -110,28 +110,20 @@ impl Control for Host {
         info!("Connection creation succeeded");
 
         // Handle Ice Candidates
-        headset_connection
-            .clone()
-            .register_on_ice_candidate_handler()
-            .await;
+        headset_connection.register_on_ice_candidate_handler().await;
 
         // Handle Data Channels
-        headset_connection
-            .clone()
-            .register_on_data_channel_handler()
-            .await;
+        headset_connection.register_on_data_channel_handler().await;
 
         // Register tracks
         for provider in &self.providers {
             for media in provider
-                .provide(headset_connection.clone())
+                .provide(&*headset_connection)
                 .await
                 .map_err(Status::internal)?
             {
                 match media {
-                    MediaType::Routine(routine) => {
-                        headset_connection.clone().add_routine(routine).await
-                    }
+                    MediaType::Routine(routine) => headset_connection.add_routine(routine).await,
                     MediaType::Channel(chn) => headset_connection.add_data_channel(chn).await,
                     MediaType::RecvChannel { label, params } => {
                         headset_connection
@@ -145,20 +137,17 @@ impl Control for Host {
         // Set the handler for ICE connection state
         // This will notify you when the peer has connected/disconnected
         headset_connection
-            .clone()
             .register_on_ice_connection_state_change_handler()
             .await;
 
         // Set the handler for Peer connection state
         // This will notify you when the peer has connected/disconnected
         headset_connection
-            .clone()
             .register_on_peer_connection_state_change_handler()
             .await;
 
         // Spawn stream listener
         headset_connection
-            .clone()
             .spawn_on_input_msg_handler(input_rx)
             .await;
 
@@ -212,15 +201,18 @@ impl HeadsetConnection {
         self.recv_channels.lock().await.insert(label, params);
     }
 
-    pub async fn register_on_data_channel_handler(self: Arc<Self>) {
-        let cloned = self.clone();
+    pub async fn register_on_data_channel_handler(self: &Arc<Self>) {
+        let weak = Arc::downgrade(self);
         self.connection
             .as_ref()
             .unwrap()
             .on_data_channel(Box::new(move |chn| {
-                let cloned = cloned.clone();
+                let Some(self_arc) = weak.upgrade() else {
+                    info!("Dropping on_data_channel event as connection closed.");
+                    return Box::pin(async move {});
+                };
                 Box::pin(async move {
-                    if let Some(params) = cloned.recv_channels.lock().await.remove(chn.label()) {
+                    if let Some(params) = self_arc.recv_channels.lock().await.remove(chn.label()) {
                         info!("Got data channel with label {}", chn.label());
                         params.configure_channel(chn.as_ref()).await;
                     } else {
@@ -231,17 +223,20 @@ impl HeadsetConnection {
             .await;
     }
 
-    pub async fn register_on_ice_candidate_handler(self: Arc<Self>) {
-        let cloned = self.clone();
+    pub async fn register_on_ice_candidate_handler(self: &Arc<Self>) {
+        let weak = Arc::downgrade(self);
         self.connection
             .as_ref()
             .unwrap()
             .on_ice_candidate(Box::new(move |candidate| {
-                let cloned = cloned.clone();
+                let Some(self_arc) = weak.upgrade() else {
+                    info!("Dropping on_ice_candidate event since connection closed.");
+                    return Box::pin(async move {})
+                };
                 Box::pin(async move {
-                    if let Err(err) = cloned.on_ice_candidate(candidate).await {
+                    if let Err(err) = self_arc.on_ice_candidate(candidate).await {
                         error!("Could not notify peer of new ICE candidate. Error: {}", err);
-                        cloned
+                        self_arc
                             .output_tx
                             .send(Err(Status::from_error(err)))
                             .await
@@ -267,19 +262,28 @@ impl HeadsetConnection {
     }
 
     pub async fn spawn_on_input_msg_handler(
-        self: Arc<Self>,
+        self: &Arc<Self>,
         mut input_rx: Streaming<HandshakeMessage>,
     ) {
+        let weak = Arc::downgrade(self);
         tokio::spawn(async move {
             while let Some(msg) = input_rx.next().await {
                 match msg {
                     Ok(msg) => {
-                        if let Err(err) = self.on_input_msg(msg).await {
+                        let Some(self_arc) = weak.upgrade() else {
+                            info!("Dropping message from peer since connection closed.");
+                            continue;
+                        };
+                        if let Err(err) = self_arc.on_input_msg(msg).await {
                             error!(
                                 "Could not handle message received from peer. Error: {}",
                                 err
                             );
-                            self.output_tx.send(Err(Status::from_error(err))).await.ok();
+                            self_arc
+                                .output_tx
+                                .send(Err(Status::from_error(err)))
+                                .await
+                                .ok();
                         }
                     }
                     Err(err) => {
@@ -346,24 +350,23 @@ impl HeadsetConnection {
         }
     }
 
-    pub async fn register_on_ice_connection_state_change_handler(self: Arc<Self>) {
-        let cloned = self.clone();
+    pub async fn register_on_ice_connection_state_change_handler(self: &Arc<Self>) {
+        let weak = Arc::downgrade(self);
         self.connection
             .as_ref()
             .unwrap()
             .on_ice_connection_state_change(Box::new(move |candidate| {
-                let cloned = cloned.clone();
+                let Some(self_arc) = weak.upgrade() else {
+                    info!("Dropping on_ice_connection_state_change event as connection closed.");
+                    return Box::pin(async move {});
+                };
                 Box::pin(async move {
-                    if let Err(err) = cloned
-                        .clone()
-                        .on_ice_connection_state_change(candidate)
-                        .await
-                    {
+                    if let Err(err) = self_arc.on_ice_connection_state_change(candidate).await {
                         error!(
                             "Could not handle ICE connection state change. Error: {}",
                             err
                         );
-                        cloned
+                        self_arc
                             .output_tx
                             .send(Err(Status::from_error(err)))
                             .await
@@ -374,12 +377,8 @@ impl HeadsetConnection {
             .await;
     }
 
-    fn fire_routine(self: Arc<Self>, routine: Routine) {
-        tokio::spawn(routine);
-    }
-
     async fn on_ice_connection_state_change(
-        self: Arc<Self>,
+        &self,
         state: RTCIceConnectionState,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         debug!("Connection state has changed {}", state);
@@ -388,7 +387,7 @@ impl HeadsetConnection {
             let mut guard = self.on_start_routines.lock().await;
             if let Some(routines) = guard.take() {
                 for routine in routines {
-                    self.clone().fire_routine(routine);
+                    spawn_routine(routine);
                 }
             }
 
@@ -409,20 +408,23 @@ impl HeadsetConnection {
         Ok(())
     }
 
-    pub async fn register_on_peer_connection_state_change_handler(self: Arc<Self>) {
-        let cloned = self.clone();
+    pub async fn register_on_peer_connection_state_change_handler(self: &Arc<Self>) {
+        let weak = Arc::downgrade(self);
         self.connection
             .as_ref()
             .unwrap()
             .on_peer_connection_state_change(Box::new(move |candidate| {
-                let cloned = cloned.clone();
+                let Some(self_arc) = weak.upgrade() else {
+                    info!("Dropping on_peer_connection_state_change event as connection closed.");
+                    return Box::pin(async move {});
+                };
                 Box::pin(async move {
-                    if let Err(err) = cloned.on_peer_connection_state_change(candidate).await {
+                    if let Err(err) = self_arc.on_peer_connection_state_change(candidate).await {
                         error!(
                             "Could not handle peer connection state change. Error: {}",
                             err
                         );
-                        cloned
+                        self_arc
                             .output_tx
                             .send(Err(Status::from_error(err)))
                             .await
@@ -438,21 +440,22 @@ impl HeadsetConnection {
         state: RTCPeerConnectionState,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         debug!("Peer connection state has changed {}", state);
-        if state == RTCPeerConnectionState::Disconnected {
-            // TODO: do something
-            warn!("Peer connection disconnected");
-        }
-
+        match state {
+            RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed => {
+                info!("Connection failed or closed");
+            }
+            _ => {}
+        };
         Ok(())
     }
 
-    pub async fn add_routine(self: Arc<Self>, routine: Routine) {
+    pub async fn add_routine(&self, routine: Routine) {
         let mut guard = self.on_start_routines.lock().await;
         if let Some(routines) = guard.as_mut() {
             routines.push(routine);
         } else {
             std::mem::drop(guard);
-            self.fire_routine(routine);
+            spawn_routine(routine);
         }
     }
 
@@ -495,6 +498,7 @@ impl Drop for HeadsetConnection {
     fn drop(&mut self) {
         let connection = self.connection.take().unwrap();
         tokio::spawn(async move {
+            info!("Closing connection");
             if let Err(err) = connection.close().await {
                 error!("Failed to close connection. Error: {}", err);
             }
@@ -516,4 +520,12 @@ impl tokio_stream::Stream for HeadsetStream {
     ) -> std::task::Poll<Option<Self::Item>> {
         self.1.poll_recv(cx)
     }
+}
+
+fn spawn_routine(routine: Routine) {
+    tokio::spawn(async move {
+        if let Err(err) = routine.await {
+            warn!("Routine exited with error. Error: {}", err);
+        }
+    });
 }

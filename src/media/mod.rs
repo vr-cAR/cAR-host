@@ -12,10 +12,10 @@ use webrtc::{
 pub trait MediaProvider {
     fn init(&mut self) {}
 
-    fn provide(
-        &self,
-        _conn: Arc<dyn AsRef<RTCPeerConnection> + Send + Sync>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<MediaType>, String>> + Send + '_>> {
+    fn provide<'a>(
+        &'a self,
+        _conn: &'a (dyn AsRef<RTCPeerConnection> + Send + Sync),
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<MediaType>, String>> + Send + 'a>> {
         Box::pin(async { Ok(vec![]) })
     }
 }
