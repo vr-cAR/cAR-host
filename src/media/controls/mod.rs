@@ -28,10 +28,12 @@ where
 }
 
 pub trait ControlsReceiver {
-    fn recv(
-        &mut self,
+    type Err: Error;
+    type RecvFuture<'a>: Future<Output=Result<(), Self::Err>> where Self: 'a;
+    fn recv<'a>(
+        &'a mut self,
         controls: ThumbstickDirection,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn Error>>> + '_>>;
+    ) -> Self::RecvFuture<'a>;
 }
 
 pub trait ControlsReceiverFactory {

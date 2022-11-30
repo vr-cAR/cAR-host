@@ -1,4 +1,4 @@
 {
-    "rust-analyzer.checkOnSave.features": ["gstreamer"],
+    "rust-analyzer.checkOnSave.features": ["gstreamer", "ros"],
     "rust-analyzer.cargo.features": "all"
 }

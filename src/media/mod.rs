@@ -41,19 +41,19 @@ pub struct RecvChannelParams {
 impl RecvChannelParams {
     pub async fn configure_channel(mut self, chn: &RTCDataChannel) {
         if let Some(on_open) = self.on_open.take() {
-            chn.on_open(on_open).await;
+            chn.on_open(on_open);
         }
 
         if let Some(on_msg) = self.on_msg.take() {
-            chn.on_message(on_msg).await;
+            chn.on_message(on_msg);
         }
 
         if let Some(on_close) = self.on_close.take() {
-            chn.on_close(on_close).await;
+            chn.on_close(on_close);
         }
 
         if let Some(on_error) = self.on_error.take() {
-            chn.on_error(on_error).await;
+            chn.on_error(on_error);
         }
     }
 }

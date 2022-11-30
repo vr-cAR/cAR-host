@@ -1,7 +1,7 @@
 use log::{trace, warn};
 use rosrust::Publisher;
 use rosrust_msg::std_msgs::Float32MultiArray;
-use std::{error::Error, future::Future, pin::Pin};
+use std::{error::Error, future::Future, pin::Pin, fmt::{Display, self}};
 
 use super::ControlsReceiverFactory;
 use crate::{c_ar_controls::ThumbstickDirection, media::controls::ControlsReceiver};
@@ -43,11 +43,24 @@ impl RosControlsReceiver {
     }
 }
 
+#[derive(Debug)]
+pub enum ControlsReceiverError{}
+
+impl Display for ControlsReceiverError{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Controls receiver error")
+    }
+}
+
+impl Error for ControlsReceiverError{}
+
 impl ControlsReceiver for RosControlsReceiver {
+    type Err = ControlsReceiverError;
+    type RecvFuture<'a> = Pin<Box<dyn Future<Output = Result<(), Self::Err>> + 'a>>;
     fn recv(
         &mut self,
         controls: ThumbstickDirection,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn Error>>> + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<(), ControlsReceiverError>> + '_>> {
         if controls.seq_num <= self.acc {
             return Box::pin(async move { Ok(()) });
         }

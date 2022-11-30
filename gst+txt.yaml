@@ -4,9 +4,6 @@ media:
       mime_type: video/VP8
       elements:
         - name: autovideosrc
-        - name: aspectratiocrop
-          properties:
-            aspect-ratio: 1/1
         - name: videoconvert
         - name: vp8enc
           properties:

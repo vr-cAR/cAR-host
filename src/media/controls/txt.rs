@@ -1,5 +1,5 @@
 use log::trace;
-use std::{error::Error, future::Future, pin::Pin};
+use std::{error::Error, future::Future, pin::Pin, fmt::{Display, self}};
 
 use crate::{c_ar_controls::ThumbstickDirection, media::controls::ControlsReceiver};
 
@@ -26,11 +26,24 @@ impl TxtControlsReceiver {
     }
 }
 
+#[derive(Debug)]
+pub enum ControlsReceiverError{}
+
+impl Display for ControlsReceiverError{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Controls receiver error")
+    }
+}
+
+impl Error for ControlsReceiverError{}
+
 impl ControlsReceiver for TxtControlsReceiver {
+    type Err = ControlsReceiverError;
+    type RecvFuture<'a> = Pin<Box<dyn Future<Output = Result<(), Self::Err>> + 'a>>;
     fn recv(
         &mut self,
         controls: ThumbstickDirection,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn Error>>> + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<(), ControlsReceiverError>> + '_>> {
         if controls.seq_num <= self.acc {
             return Box::pin(async move { Ok(()) });
         }

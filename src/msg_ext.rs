@@ -91,7 +91,7 @@ impl TryFrom<NotifyIce> for RTCIceCandidateInit {
 impl NotifyIce {
     pub async fn from(ice: RTCIceCandidate) -> Result<Self, webrtc::Error> {
         let json_base64 = base64::encode(
-            serde_json::to_string(&ice.to_json().await?)
+            serde_json::to_string(&ice.to_json()?)
                 .expect("serialization of ice to json should not fail"),
         );
         Ok(Self { json_base64 })

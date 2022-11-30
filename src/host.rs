@@ -110,10 +110,10 @@ impl Control for Host {
         info!("Connection creation succeeded");
 
         // Handle Ice Candidates
-        headset_connection.register_on_ice_candidate_handler().await;
+        headset_connection.register_on_ice_candidate_handler();
 
         // Handle Data Channels
-        headset_connection.register_on_data_channel_handler().await;
+        headset_connection.register_on_data_channel_handler();
 
         // Register tracks
         for provider in &self.providers {
@@ -136,20 +136,14 @@ impl Control for Host {
 
         // Set the handler for ICE connection state
         // This will notify you when the peer has connected/disconnected
-        headset_connection
-            .register_on_ice_connection_state_change_handler()
-            .await;
+        headset_connection.register_on_ice_connection_state_change_handler();
 
         // Set the handler for Peer connection state
         // This will notify you when the peer has connected/disconnected
-        headset_connection
-            .register_on_peer_connection_state_change_handler()
-            .await;
+        headset_connection.register_on_peer_connection_state_change_handler();
 
         // Spawn stream listener
-        headset_connection
-            .spawn_on_input_msg_handler(input_rx)
-            .await;
+        headset_connection.spawn_on_input_msg_handler(input_rx);
 
         // create offer
         headset_connection.send_offer().await.map_err(|err| {
@@ -201,7 +195,7 @@ impl HeadsetConnection {
         self.recv_channels.lock().await.insert(label, params);
     }
 
-    pub async fn register_on_data_channel_handler(self: &Arc<Self>) {
+    pub fn register_on_data_channel_handler(self: &Arc<Self>) {
         let weak = Arc::downgrade(self);
         self.connection
             .as_ref()
@@ -219,11 +213,10 @@ impl HeadsetConnection {
                         warn!("Got data channel with unknown label {}", chn.label());
                     }
                 })
-            }))
-            .await;
+            }));
     }
 
-    pub async fn register_on_ice_candidate_handler(self: &Arc<Self>) {
+    pub fn register_on_ice_candidate_handler(self: &Arc<Self>) {
         let weak = Arc::downgrade(self);
         self.connection
             .as_ref()
@@ -243,8 +236,7 @@ impl HeadsetConnection {
                             .ok();
                     }
                 })
-            }))
-            .await;
+            }));
     }
 
     async fn on_ice_candidate(
@@ -261,10 +253,7 @@ impl HeadsetConnection {
         Ok(())
     }
 
-    pub async fn spawn_on_input_msg_handler(
-        self: &Arc<Self>,
-        mut input_rx: Streaming<HandshakeMessage>,
-    ) {
+    pub fn spawn_on_input_msg_handler(self: &Arc<Self>, mut input_rx: Streaming<HandshakeMessage>) {
         let weak = Arc::downgrade(self);
         tokio::spawn(async move {
             while let Some(msg) = input_rx.next().await {
@@ -350,7 +339,7 @@ impl HeadsetConnection {
         }
     }
 
-    pub async fn register_on_ice_connection_state_change_handler(self: &Arc<Self>) {
+    pub fn register_on_ice_connection_state_change_handler(self: &Arc<Self>) {
         let weak = Arc::downgrade(self);
         self.connection
             .as_ref()
@@ -373,8 +362,7 @@ impl HeadsetConnection {
                             .ok();
                     }
                 })
-            }))
-            .await;
+            }));
     }
 
     async fn on_ice_connection_state_change(
@@ -408,7 +396,7 @@ impl HeadsetConnection {
         Ok(())
     }
 
-    pub async fn register_on_peer_connection_state_change_handler(self: &Arc<Self>) {
+    pub fn register_on_peer_connection_state_change_handler(self: &Arc<Self>) {
         let weak = Arc::downgrade(self);
         self.connection
             .as_ref()
@@ -431,8 +419,7 @@ impl HeadsetConnection {
                             .ok();
                     }
                 })
-            }))
-            .await;
+            }));
     }
 
     async fn on_peer_connection_state_change(
