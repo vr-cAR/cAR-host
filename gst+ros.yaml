@@ -12,4 +12,7 @@ media:
       - name: rtpvp8pay
         properties:
           auto-header-extension: false
-  - type: TxtControls
+  - type: RosControls
+    ros_node: controller_node
+    ros_topic: cAR_ackermann_curvature_drive_fake
+    queue_size: 10
