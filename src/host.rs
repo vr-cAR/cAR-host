@@ -470,6 +470,7 @@ impl HeadsetConnection {
             .set_local_description(offer)
             .await?;
 
+        debug!("Sent offer: {}", offer_json);
         self.output_tx.send(Ok(msg)).await?;
         Ok(())
     }

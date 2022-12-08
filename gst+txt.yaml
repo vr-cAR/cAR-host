@@ -3,7 +3,9 @@ media:
   - type: Gst
     mime_type: video/VP8
     elements:
-      - name: autovideosrc
+      - name: avfvideosrc
+        properties:
+          device-index: 0
       - name: videoconvert
       - name: vp8enc
         properties:

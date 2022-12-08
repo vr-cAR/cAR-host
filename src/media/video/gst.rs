@@ -23,6 +23,14 @@ pub struct Element {
     name: String,
     #[serde(default)]
     properties: HashMap<String, Value>,
+    #[serde(default)]
+    caps: Option<Caps>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Caps {
+    name: String,
+    fields: HashMap<String, Value>
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -75,10 +83,10 @@ impl GstMediaProvider {
 
         // build gstreamer pipeline
         let pipeline = gstreamer::Pipeline::default();
-        let mut elems = Vec::new();
+        let mut elems_and_caps = Vec::new();
         if let Err(err) = (|| {
             // add elements to chain
-            for Element { name, properties } in self.elements {
+            for Element { name, properties, caps } in self.elements {
                 let properties: HashMap<_, _> = properties
                     .into_iter()
                     .map(|(key, val)| (key, val.to_string()))
@@ -87,7 +95,7 @@ impl GstMediaProvider {
                 for (name, value) in &properties {
                     builder = builder.property_from_str(name, value);
                 }
-                elems.push(builder.build()?);
+                elems_and_caps.push((builder.build()?, caps));
             }
 
             // create rtp packet sink
@@ -129,11 +137,21 @@ impl GstMediaProvider {
             );
 
             // add elements to pipeline
-            let mut elems_ref: Vec<_> = elems.iter().collect();
+            let mut elems_ref: Vec<_> = elems_and_caps.iter().map(|(elems, _caps)| elems).collect();
             elems_ref.push(appsink.upcast_ref());
             pipeline.add_many(&elems_ref)?;
-            for elem_idx in 1..elems_ref.len() {
-                elems_ref[elem_idx - 1].link(elems_ref[elem_idx])?;
+            for elem_idx in 1..elems_and_caps.len() {
+                let (prev_elem, prev_caps) = &elems_and_caps[elem_idx - 1];
+                let (next_elem, _next_caps) = &elems_and_caps[elem_idx];
+                if let Some(caps) = prev_caps {
+                    let mut builder = gstreamer::Caps::builder(&caps.name);
+                    for (field, value) in &caps.fields {
+                        builder = builder.field(field, value.to_string());
+                    }
+                    prev_elem.link_filtered(next_elem, &builder.build())?;
+                } else {
+                    prev_elem.link(next_elem)?;
+                }
             }
             Result::<_, Box<dyn Error>>::Ok(())
         })() {

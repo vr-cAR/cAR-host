@@ -16,10 +16,7 @@ use webrtc::{
         sdp::session_description::RTCSessionDescription,
     },
     rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication,
-    rtp_transceiver::{
-        rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType},
-        rtp_receiver::RTCRtpReceiver,
-    },
+    rtp_transceiver::rtp_receiver::RTCRtpReceiver,
     track::track_remote::TrackRemote,
     util::Marshal,
 };
@@ -38,20 +35,7 @@ impl ClientArgs {
     pub async fn run(self) -> Result<(), Box<dyn Error>> {
         info!("Starting client");
         let mut m = MediaEngine::default();
-        m.register_codec(
-            RTCRtpCodecParameters {
-                capability: RTCRtpCodecCapability {
-                    mime_type: media_engine::MIME_TYPE_H264.to_owned(),
-                    clock_rate: 90000,
-                    channels: 0,
-                    sdp_fmtp_line: "".to_owned(),
-                    rtcp_feedback: vec![],
-                },
-                payload_type: 102,
-                ..Default::default()
-            },
-            RTPCodecType::Video,
-        )?;
+        m.register_default_codecs()?;
 
         // Prepare the configuration
         let config = RTCConfiguration {

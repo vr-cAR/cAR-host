@@ -7,7 +7,6 @@ RUN apt-get install -y git
 RUN apt-get install -y build-essential curl
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
-RUN cargo install cross
 
 # install gRPC dependencies
 RUN apt-get install -y protobuf-compiler
@@ -35,6 +34,4 @@ ADD src /cAR-host/src
 ADD Cargo.lock /cAR-host/
 ADD Cargo.toml /cAR-host/
 ADD build.rs /cAR-host/
-
-# build
-CMD ["cargo", "build", "--release"]
+RUN cargo build --release --all-features
